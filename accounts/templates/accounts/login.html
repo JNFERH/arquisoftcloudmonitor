@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login — Cloud Monitor</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #F0F8FA;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .card {
+            background: #FBFDFD;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(2, 43, 81, 0.1);
+            padding: 48px 40px;
+            width: 100%;
+            max-width: 420px;
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .logo h1 {
+            font-size: 1.6em;
+            color: #022B51;
+            font-weight: 700;
+        }
+
+        .logo p {
+            color: #758693;
+            font-size: 0.9em;
+            margin-top: 4px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #022B51;
+            margin-bottom: 4px;
+        }
+
+        input[type="text"],
+        input[type="password"],
+        input[type="email"] {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1.5px solid #d0dce3;
+            border-radius: 8px;
+            font-size: 0.95em;
+            color: #022B51;
+            background: #F0F8FA;
+            margin-bottom: 16px;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #136D90;
+            background: #FBFDFD;
+        }
+
+        .field { margin-bottom: 4px; }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #022B51;
+            color: #FBFDFD;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 8px;
+            transition: background 0.2s;
+        }
+
+        button:hover { background: #136D90; }
+
+        .footer-link {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 0.88em;
+            color: #758693;
+        }
+
+        .footer-link a {
+            color: #136D90;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .footer-link a:hover { text-decoration: underline; }
+
+        .errorlist {
+            color: #c0392b;
+            font-size: 0.82em;
+            list-style: none;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">
+            <h1>☁️ Cloud Monitor by Bite.co</h1>
+            <p>Sign in to your account</p>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            {% for field in form %}
+                <div class="field">
+                    <label>{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.errors %}
+                        <ul class="errorlist">
+                            {% for error in field.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                </div>
+            {% endfor %}
+            <button type="submit">Log in</button>
+        </form>
+        <div class="footer-link">
+            Don't have an account? <a href="{% url 'register' %}">Register</a>
+        </div>
+    </div>
+</body>
+</html>

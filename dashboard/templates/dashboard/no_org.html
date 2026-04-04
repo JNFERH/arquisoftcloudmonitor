@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>No Organization — Cloud Monitor</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #F0F8FA;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .card {
+            background: #FBFDFD;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(2, 43, 81, 0.1);
+            padding: 48px 40px;
+            width: 100%;
+            max-width: 420px;
+            text-align: center;
+        }
+
+        .icon { font-size: 3em; margin-bottom: 16px; }
+
+        h2 { color: #022B51; margin-bottom: 10px; }
+
+        p { color: #758693; font-size: 0.92em; margin-bottom: 28px; }
+
+        a {
+            display: inline-block;
+            padding: 10px 24px;
+            background: #022B51;
+            color: #FBFDFD;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9em;
+            transition: background 0.2s;
+        }
+
+        a:hover { background: #136D90; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">🔒</div>
+        <h2>No Organization Assigned</h2>
+        <p>Your account has not been assigned to an organization yet. Please contact your administrator.</p>
+        <a href="{% url 'logout' %}">Logout</a>
+    </div>
+</body>
+</html>

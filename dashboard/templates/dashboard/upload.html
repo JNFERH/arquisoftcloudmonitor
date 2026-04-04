@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Upload JSON — Cloud Monitor</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #F0F8FA;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .card {
+            background: #FBFDFD;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(2, 43, 81, 0.1);
+            padding: 48px 40px;
+            width: 100%;
+            max-width: 460px;
+        }
+
+        .card h2 {
+            font-size: 1.4em;
+            color: #022B51;
+            margin-bottom: 6px;
+        }
+
+        .card p {
+            color: #758693;
+            font-size: 0.88em;
+            margin-bottom: 28px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #022B51;
+            margin-bottom: 8px;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1.5px dashed #136D90;
+            border-radius: 8px;
+            font-size: 0.9em;
+            background: #F0F8FA;
+            color: #022B51;
+            margin-bottom: 24px;
+            cursor: pointer;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #022B51;
+            color: #FBFDFD;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover { background: #136D90; }
+
+        .back-link {
+            text-align: center;
+            margin-top: 16px;
+            font-size: 0.88em;
+        }
+
+        .back-link a {
+            color: #136D90;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .back-link a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Upload JSON File</h2>
+        <p>Select a cost report in JSON format to import into the system.</p>
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            {% for field in form %}
+                <label>{{ field.label }}</label>
+                {{ field }}
+            {% endfor %}
+            <button type="submit">Upload</button>
+        </form>
+        <div class="back-link">
+            <a href="{% url 'dashboard' %}">← Back to Dashboard</a>
+        </div>
+    </div>
+</body>
+</html>
