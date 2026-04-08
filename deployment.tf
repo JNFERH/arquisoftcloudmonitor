@@ -376,9 +376,11 @@ resource "aws_db_instance" "primary" {
   username = local.db_user
   password = var.db_password
 
-  vpc_security_group_ids = [aws_security_group.traffic_rds.id]
-  publicly_accessible    = true
-  skip_final_snapshot    = true
+  vpc_security_group_ids  = [aws_security_group.traffic_rds.id]
+  publicly_accessible     = true
+  skip_final_snapshot     = true
+  # Requerido para poder crear réplicas de lectura
+  backup_retention_period = 1
 
   tags = merge(local.common_tags, {
     Name = "${var.project_prefix}-db-primary"
