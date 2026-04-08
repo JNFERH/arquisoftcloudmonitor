@@ -13,10 +13,9 @@
 #    - acm-kong                      (Kong API Gateway)
 #    - acm-finops-{a,b,c}            (3x Django - Manejador de FinOps)
 #    - acm-reports-{a,b,c}           (3x Django - Manejador de Reportes + Notificaciones)
+#    - acm-db-primary  (RDS PostgreSQL primaria — escritura)
+#    - acm-db-replica  (RDS read replica — lectura)
 #    - acm-orgs                      (1x Django - Manejador de Organizaciones + API AUTH)
-#    - acm-db-finops                  (PostgreSQL - Base de Datos Consumo Cloud / FinOps)
-#    - acm-db-reports                 (PostgreSQL - Base de Datos Consumo Cloud / Reportes)
-#    - acm-db-auth                    (PostgreSQL - Base de Datos Autenticación y Autorización)
 #    - acm-cache                      (Redis - Reportes precalculados, TTL 1 mes)
 #
 # 3. Almacenamiento:
@@ -67,9 +66,9 @@ variable "github_user" {
   default     = "JNFERH"
 }
 
-# Variable. Contraseña compartida para todos los usuarios de PostgreSQL.
+# Variable. Contraseña para PostgreSQL.
 variable "db_password" {
-  description = "Password for all PostgreSQL database users"
+  description = "Password for RDS PostgreSQL"
   type        = string
   default     = "isis2503"
   sensitive   = true
@@ -96,15 +95,9 @@ locals {
   repository = "https://${var.github_user}:${var.github_token}@github.com/JNFERH/arquisoftcloudmonitor.git"
   branch     = "main"
 
-  # Nombres de bases de datos
-  db_finops_name  = "monitoring_db"
-  db_reports_name = "costs_db"
-  db_auth_name    = "auth_db"
-
-  # Usuarios de PostgreSQL por cada DB
-  db_finops_user  = "finops_user"
-  db_reports_user = "reports_user"
-  db_auth_user    = "auth_user"
+  db_name      = "monitoring_db"   # default → accounts, reports, auth
+  costs_db     = "costs_db"        # costs_db → dashboard (CostRecord, Organization)
+  db_user      = "cloudmonitor_user"
 
   common_tags = {
     Project   = local.project_name
@@ -171,9 +164,9 @@ resource "aws_security_group" "traffic_django" {
 
 # Recurso. Grupo de seguridad para PostgreSQL (puerto 5432).
 # Lo usan las tres instancias de DB.
-resource "aws_security_group" "traffic_db" {
-  name        = "${var.project_prefix}-traffic-db"
-  description = "Allow PostgreSQL access on port 5432"
+resource "aws_security_group" "traffic_rds" {
+  name        = "${var.project_prefix}-traffic-rds"
+  description = "Allow PostgreSQL RDS access on port 5432"
 
   ingress {
     description = "PostgreSQL traffic"
@@ -184,7 +177,7 @@ resource "aws_security_group" "traffic_db" {
   }
 
   tags = merge(local.common_tags, {
-    Name = "${var.project_prefix}-traffic-db"
+    Name = "${var.project_prefix}-traffic-rds"
   })
 }
 
@@ -294,119 +287,121 @@ resource "aws_instance" "kong" {
 }
 
 # ─────────────────────────────────────────────
-# BASE DE DATOS: FINOPS
+# HELPER: script de user_data compartido
+# Crea costs_db en RDS (que solo crea monitoring_db por defecto),
+# genera el .env, instala deps y corre gunicorn
 # ─────────────────────────────────────────────
 
-# Recurso. Instancia EC2 para la DB de consumo cloud (FinOps).
-# Crea la base de datos monitoring_db usada por los 3 servidores acm-finops-{a,b,c}.
-resource "aws_instance" "db_finops" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_type
-  associate_public_ip_address = true
-  vpc_security_group_ids = [
-    aws_security_group.traffic_db.id,
-    aws_security_group.traffic_ssh.id
-  ]
+locals {
+  app_user_data = <<-EOT
+    #!/bin/bash
 
-  user_data = <<-EOT
-              #!/bin/bash
+    apt-get update -y
+    apt-get install -y python3-pip git build-essential libpq-dev python3-dev postgresql-client
 
-              apt-get update -y
-              apt-get install -y postgresql postgresql-contrib
+    mkdir -p /app
+    cd /app
+    if [ ! -d arquisoftcloudmonitor ]; then
+      git clone ${local.repository} arquisoftcloudmonitor
+    fi
+    cd /app/arquisoftcloudmonitor
+    git fetch origin ${local.branch}
+    git checkout ${local.branch}
 
-              sudo -u postgres psql -c "CREATE USER ${local.db_finops_user} WITH PASSWORD '${var.db_password}';"
-              sudo -u postgres createdb -O ${local.db_finops_user} ${local.db_finops_name}
+    # Crear costs_db en RDS (RDS solo crea monitoring_db automáticamente)
+    PGPASSWORD='${var.db_password}' psql \
+      -h ${aws_db_instance.primary.address} \
+      -U ${local.db_user} \
+      -d ${local.db_name} \
+      -c "CREATE DATABASE ${local.costs_db};" || true
 
-              PG_HBA="/etc/postgresql/16/main/pg_hba.conf"
-              PG_CONF="/etc/postgresql/16/main/postgresql.conf"
-              echo "host all all 0.0.0.0/0 md5" | tee -a $PG_HBA
-              echo "listen_addresses='*'"        | tee -a $PG_CONF
-              echo "max_connections=2000"        | tee -a $PG_CONF
+    printf 'SECRET_KEY=%s\nDB_NAME=%s\nDB_USER=%s\nDB_PASSWORD=%s\nDB_HOST=%s\nDB_PORT=5432\nCOSTS_DB_NAME=%s\nREDIS_HOST=%s\nREDIS_PORT=6379\n' \
+      '${var.django_secret_key}' \
+      '${local.db_name}' \
+      '${local.db_user}' \
+      '${var.db_password}' \
+      '${aws_db_instance.primary.address}' \
+      '${local.costs_db}' \
+      '${aws_instance.cache.private_ip}' \
+      > /app/arquisoftcloudmonitor/.env
 
-              systemctl restart postgresql
-              EOT
+    sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['*']/" \
+      /app/arquisoftcloudmonitor/monitoring/settings.py
+
+    pip3 install --upgrade pip --break-system-packages
+    pip3 install -r requirements.txt --break-system-packages
+    pip3 install gunicorn redis django-redis --break-system-packages
+
+    echo "Esperando RDS..."
+    for i in $(seq 1 30); do
+      python3 -c "
+import psycopg2, sys
+try:
+    psycopg2.connect(dbname='${local.db_name}',user='${local.db_user}',password='${var.db_password}',host='${aws_db_instance.primary.address}',port=5432)
+    sys.exit(0)
+except: sys.exit(1)
+" && break
+      sleep 10
+    done
+
+    cd /app/arquisoftcloudmonitor
+    python3 manage.py makemigrations
+    python3 manage.py migrate
+    python3 manage.py migrate --database=costs_db
+
+    nohup gunicorn monitoring.wsgi:application \
+      --bind 0.0.0.0:8080 \
+      --workers 3 \
+      --log-file /var/log/gunicorn.log \
+      --access-logfile /var/log/gunicorn-access.log \
+      --daemon
+  EOT
+}
+
+# ─────────────────────────────────────────────
+# RDS — BASE DE DATOS PRIMARIA
+# Contiene monitoring_db (usuarios/auth) y costs_db (organizaciones)
+# ─────────────────────────────────────────────
+
+resource "aws_db_instance" "primary" {
+  identifier        = "${var.project_prefix}-db-primary"
+  engine            = "postgres"
+  engine_version    = "16"
+  instance_class    = "db.t3.micro"
+  allocated_storage = 20
+
+  # RDS crea una sola instancia pero Django la usa como dos DBs lógicas
+  # monitoring_db y costs_db se crean vía user_data en las instancias app
+  db_name  = local.db_name
+  username = local.db_user
+  password = var.db_password
+
+  vpc_security_group_ids = [aws_security_group.traffic_rds.id]
+  publicly_accessible    = true
+  skip_final_snapshot    = true
 
   tags = merge(local.common_tags, {
-    Name = "${var.project_prefix}-db-finops"
-    Role = "database-finops"
+    Name = "${var.project_prefix}-db-primary"
+    Role = "database-primary"
   })
 }
 
 # ─────────────────────────────────────────────
-# BASE DE DATOS: REPORTES
+# RDS — RÉPLICA DE LECTURA
+# Django puede apuntar aquí para operaciones de solo lectura (reportes)
 # ─────────────────────────────────────────────
 
-# Recurso. Instancia EC2 para la DB de consumo cloud (Reportes).
-# Crea la base de datos costs_db usada por los 3 servidores acm-reports-{a,b,c}.
-resource "aws_instance" "db_reports" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_type
-  associate_public_ip_address = true
-  vpc_security_group_ids = [
-    aws_security_group.traffic_db.id,
-    aws_security_group.traffic_ssh.id
-  ]
+resource "aws_db_instance" "replica" {
+  identifier          = "${var.project_prefix}-db-replica"
+  replicate_source_db = aws_db_instance.primary.identifier
+  instance_class      = "db.t3.micro"
 
-  user_data = <<-EOT
-              #!/bin/bash
-
-              apt-get update -y
-              apt-get install -y postgresql postgresql-contrib
-
-              sudo -u postgres psql -c "CREATE USER ${local.db_reports_user} WITH PASSWORD '${var.db_password}';"
-              sudo -u postgres createdb -O ${local.db_reports_user} ${local.db_reports_name}
-
-              PG_HBA="/etc/postgresql/16/main/pg_hba.conf"
-              PG_CONF="/etc/postgresql/16/main/postgresql.conf"
-              echo "host all all 0.0.0.0/0 md5" | tee -a $PG_HBA
-              echo "listen_addresses='*'"        | tee -a $PG_CONF
-              echo "max_connections=2000"        | tee -a $PG_CONF
-
-              systemctl restart postgresql
-              EOT
+  publicly_accessible = true
+  skip_final_snapshot = true
 
   tags = merge(local.common_tags, {
-    Name = "${var.project_prefix}-db-reports"
-    Role = "database-reports"
-  })
-}
-
-# ─────────────────────────────────────────────
-# BASE DE DATOS: AUTENTICACIÓN Y AUTORIZACIÓN
-# ─────────────────────────────────────────────
-
-# Recurso. Instancia EC2 para la DB de autenticación y autorización.
-# Crea auth_db usada por la instancia acm-orgs (API AUTH).
-resource "aws_instance" "db_auth" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_type
-  associate_public_ip_address = true
-  vpc_security_group_ids = [
-    aws_security_group.traffic_db.id,
-    aws_security_group.traffic_ssh.id
-  ]
-
-  user_data = <<-EOT
-              #!/bin/bash
-
-              apt-get update -y
-              apt-get install -y postgresql postgresql-contrib
-
-              sudo -u postgres psql -c "CREATE USER ${local.db_auth_user} WITH PASSWORD '${var.db_password}';"
-              sudo -u postgres createdb -O ${local.db_auth_user} ${local.db_auth_name}
-
-              PG_HBA="/etc/postgresql/16/main/pg_hba.conf"
-              PG_CONF="/etc/postgresql/16/main/postgresql.conf"
-              echo "host all all 0.0.0.0/0 md5" | tee -a $PG_HBA
-              echo "listen_addresses='*'"        | tee -a $PG_CONF
-              echo "max_connections=2000"        | tee -a $PG_CONF
-
-              systemctl restart postgresql
-              EOT
-
-  tags = merge(local.common_tags, {
-    Name = "${var.project_prefix}-db-auth"
-    Role = "database-auth"
+    Name = "${var.project_prefix}-db-replica"
+    Role = "database-replica"
   })
 }
 
@@ -473,67 +468,14 @@ resource "aws_instance" "finops" {
     aws_security_group.traffic_ssh.id
   ]
 
-  user_data = <<-EOT
-    #!/bin/bash
-
-    apt-get update -y
-    apt-get install -y python3-pip git build-essential libpq-dev python3-dev
-
-    mkdir -p /app
-    cd /app
-    if [ ! -d arquisoftcloudmonitor ]; then
-      git clone ${local.repository} arquisoftcloudmonitor
-    fi
-    cd /app/arquisoftcloudmonitor
-    git fetch origin ${local.branch}
-    git checkout ${local.branch}
-
-    printf 'SECRET_KEY=%s\nDB_NAME=%s\nDB_USER=%s\nDB_PASSWORD=%s\nDB_HOST=%s\nDB_PORT=5432\nCOSTS_DB_NAME=%s\n' \
-      '${var.django_secret_key}' \
-      '${local.db_finops_name}' \
-      '${local.db_finops_user}' \
-      '${var.db_password}' \
-      '${aws_instance.db_finops.private_ip}' \
-      '${local.db_reports_name}' \
-      > /app/arquisoftcloudmonitor/.env
-
-    sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['*']/" \
-      /app/arquisoftcloudmonitor/monitoring/settings.py
-
-    pip3 install --upgrade pip --break-system-packages
-    pip3 install -r requirements.txt --break-system-packages
-    pip3 install gunicorn --break-system-packages
-
-    echo "Esperando DB finops..."
-    for i in $(seq 1 30); do
-      python3 -c "
-import psycopg2, sys
-try:
-    psycopg2.connect(dbname='${local.db_finops_name}',user='${local.db_finops_user}',password='${var.db_password}',host='${aws_instance.db_finops.private_ip}',port=5432)
-    sys.exit(0)
-except: sys.exit(1)
-" && break
-      sleep 10
-    done
-
-    cd /app/arquisoftcloudmonitor
-    python3 manage.py makemigrations
-    python3 manage.py migrate
-
-    nohup gunicorn monitoring.wsgi:application \
-      --bind 0.0.0.0:8080 \
-      --workers 3 \
-      --log-file /var/log/gunicorn.log \
-      --access-logfile /var/log/gunicorn-access.log \
-      --daemon
-  EOT
+  user_data = local.app_user_data
 
   tags = merge(local.common_tags, {
     Name = "${var.project_prefix}-finops-${each.key}"
     Role = "finops"
   })
 
-  depends_on = [aws_instance.db_finops]
+  depends_on = [aws_db_instance.primary, aws_instance.cache]
 }
 
 # ─────────────────────────────────────────────
@@ -554,68 +496,14 @@ resource "aws_instance" "reports" {
     aws_security_group.traffic_ssh.id
   ]
 
-  user_data = <<-EOT
-    #!/bin/bash
-
-    apt-get update -y
-    apt-get install -y python3-pip git build-essential libpq-dev python3-dev
-
-    mkdir -p /app
-    cd /app
-    if [ ! -d arquisoftcloudmonitor ]; then
-      git clone ${local.repository} arquisoftcloudmonitor
-    fi
-    cd /app/arquisoftcloudmonitor
-    git fetch origin ${local.branch}
-    git checkout ${local.branch}
-
-    printf 'SECRET_KEY=%s\nDB_NAME=%s\nDB_USER=%s\nDB_PASSWORD=%s\nDB_HOST=%s\nDB_PORT=5432\nCOSTS_DB_NAME=%s\nREDIS_HOST=%s\nREDIS_PORT=6379\n' \
-      '${var.django_secret_key}' \
-      '${local.db_reports_name}' \
-      '${local.db_reports_user}' \
-      '${var.db_password}' \
-      '${aws_instance.db_reports.private_ip}' \
-      '${local.db_reports_name}' \
-      '${aws_instance.cache.private_ip}' \
-      > /app/arquisoftcloudmonitor/.env
-
-    sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['*']/" \
-      /app/arquisoftcloudmonitor/monitoring/settings.py
-
-    pip3 install --upgrade pip --break-system-packages
-    pip3 install -r requirements.txt --break-system-packages
-    pip3 install gunicorn redis django-redis --break-system-packages
-
-    echo "Esperando DB reports..."
-    for i in $(seq 1 30); do
-      python3 -c "
-import psycopg2, sys
-try:
-    psycopg2.connect(dbname='${local.db_reports_name}',user='${local.db_reports_user}',password='${var.db_password}',host='${aws_instance.db_reports.private_ip}',port=5432)
-    sys.exit(0)
-except: sys.exit(1)
-" && break
-      sleep 10
-    done
-
-    cd /app/arquisoftcloudmonitor
-    python3 manage.py makemigrations
-    python3 manage.py migrate
-
-    nohup gunicorn monitoring.wsgi:application \
-      --bind 0.0.0.0:8080 \
-      --workers 3 \
-      --log-file /var/log/gunicorn.log \
-      --access-logfile /var/log/gunicorn-access.log \
-      --daemon
-  EOT
+  user_data = local.app_user_data
 
   tags = merge(local.common_tags, {
     Name = "${var.project_prefix}-reports-${each.key}"
     Role = "reports"
   })
 
-  depends_on = [aws_instance.db_reports, aws_instance.cache]
+  depends_on = [aws_db_instance.primary, aws_instance.cache]
 }
 
 # ─────────────────────────────────────────────
@@ -633,67 +521,14 @@ resource "aws_instance" "orgs" {
     aws_security_group.traffic_ssh.id
   ]
 
-  user_data = <<-EOT
-    #!/bin/bash
-
-    apt-get update -y
-    apt-get install -y python3-pip git build-essential libpq-dev python3-dev
-
-    mkdir -p /app
-    cd /app
-    if [ ! -d arquisoftcloudmonitor ]; then
-      git clone ${local.repository} arquisoftcloudmonitor
-    fi
-    cd /app/arquisoftcloudmonitor
-    git fetch origin ${local.branch}
-    git checkout ${local.branch}
-
-    printf 'SECRET_KEY=%s\nDB_NAME=%s\nDB_USER=%s\nDB_PASSWORD=%s\nDB_HOST=%s\nDB_PORT=5432\nCOSTS_DB_NAME=%s\n' \
-      '${var.django_secret_key}' \
-      '${local.db_auth_name}' \
-      '${local.db_auth_user}' \
-      '${var.db_password}' \
-      '${aws_instance.db_auth.private_ip}' \
-      '${local.db_reports_name}' \
-      > /app/arquisoftcloudmonitor/.env
-
-    sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['*']/" \
-      /app/arquisoftcloudmonitor/monitoring/settings.py
-
-    pip3 install --upgrade pip --break-system-packages
-    pip3 install -r requirements.txt --break-system-packages
-    pip3 install gunicorn --break-system-packages
-
-    echo "Esperando DB auth..."
-    for i in $(seq 1 30); do
-      python3 -c "
-import psycopg2, sys
-try:
-    psycopg2.connect(dbname='${local.db_auth_name}',user='${local.db_auth_user}',password='${var.db_password}',host='${aws_instance.db_auth.private_ip}',port=5432)
-    sys.exit(0)
-except: sys.exit(1)
-" && break
-      sleep 10
-    done
-
-    cd /app/arquisoftcloudmonitor
-    python3 manage.py makemigrations
-    python3 manage.py migrate
-
-    nohup gunicorn monitoring.wsgi:application \
-      --bind 0.0.0.0:8080 \
-      --workers 3 \
-      --log-file /var/log/gunicorn.log \
-      --access-logfile /var/log/gunicorn-access.log \
-      --daemon
-  EOT
+  user_data = local.app_user_data
 
   tags = merge(local.common_tags, {
     Name = "${var.project_prefix}-orgs"
-    Role = "organizations-auth"
+    Role = "organizations"
   })
 
-  depends_on = [aws_instance.db_auth]
+  depends_on = [aws_db_instance.primary, aws_instance.cache]
 }
 
 # ─────────────────────────────────────────────
@@ -735,19 +570,14 @@ output "orgs_private_ip" {
   value       = aws_instance.orgs.private_ip
 }
 
-output "db_finops_private_ip" {
-  description = "IP privada de la DB de FinOps (monitoring_db)"
-  value       = aws_instance.db_finops.private_ip
+output "rds_primary_endpoint" {
+  description = "Endpoint RDS primaria (escritura)"
+  value       = aws_db_instance.primary.address
 }
 
-output "db_reports_private_ip" {
-  description = "IP privada de la DB de Reportes (costs_db)"
-  value       = aws_instance.db_reports.private_ip
-}
-
-output "db_auth_private_ip" {
-  description = "IP privada de la DB de Autenticación (auth_db)"
-  value       = aws_instance.db_auth.private_ip
+output "rds_replica_endpoint" {
+  description = "Endpoint RDS réplica (lectura)"
+  value       = aws_db_instance.replica.address
 }
 
 output "cache_private_ip" {
