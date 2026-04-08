@@ -310,7 +310,6 @@ resource "aws_instance" "db_finops" {
 
   user_data = <<-EOT
               #!/bin/bash
-              set -e
 
               apt-get update -y
               apt-get install -y postgresql postgresql-contrib
@@ -350,7 +349,6 @@ resource "aws_instance" "db_reports" {
 
   user_data = <<-EOT
               #!/bin/bash
-              set -e
 
               apt-get update -y
               apt-get install -y postgresql postgresql-contrib
@@ -390,7 +388,6 @@ resource "aws_instance" "db_auth" {
 
   user_data = <<-EOT
               #!/bin/bash
-              set -e
 
               apt-get update -y
               apt-get install -y postgresql postgresql-contrib
@@ -431,7 +428,6 @@ resource "aws_instance" "cache" {
 
   user_data = <<-EOT
               #!/bin/bash
-              set -e
 
               apt-get update -y
               apt-get install -y redis-server
@@ -478,61 +474,59 @@ resource "aws_instance" "finops" {
   ]
 
   user_data = <<-EOT
-              #!/bin/bash
-              set -e
+    #!/bin/bash
 
-              apt-get update -y
-              apt-get install -y python3-pip git build-essential libpq-dev python3-dev
+    apt-get update -y
+    apt-get install -y python3-pip git build-essential libpq-dev python3-dev
 
-              mkdir -p /app
-              cd /app
-              if [ ! -d arquisoftcloudmonitor ]; then
-                git clone ${local.repository} arquisoftcloudmonitor
-              fi
-              cd /app/arquisoftcloudmonitor
-              git fetch origin ${local.branch}
-              git checkout ${local.branch}
+    mkdir -p /app
+    cd /app
+    if [ ! -d arquisoftcloudmonitor ]; then
+      git clone ${local.repository} arquisoftcloudmonitor
+    fi
+    cd /app/arquisoftcloudmonitor
+    git fetch origin ${local.branch}
+    git checkout ${local.branch}
 
-              cat > /app/arquisoftcloudmonitor/.env << ENVEOF
-              SECRET_KEY=${var.django_secret_key}
-              DB_NAME=${local.db_finops_name}
-              DB_USER=${local.db_finops_user}
-              DB_PASSWORD=${var.db_password}
-              DB_HOST=${aws_instance.db_finops.private_ip}
-              DB_PORT=5432
-              COSTS_DB_NAME=${local.db_reports_name}
-              ENVEOF
+    printf 'SECRET_KEY=%s\nDB_NAME=%s\nDB_USER=%s\nDB_PASSWORD=%s\nDB_HOST=%s\nDB_PORT=5432\nCOSTS_DB_NAME=%s\n' \
+      '${var.django_secret_key}' \
+      '${local.db_finops_name}' \
+      '${local.db_finops_user}' \
+      '${var.db_password}' \
+      '${aws_instance.db_finops.private_ip}' \
+      '${local.db_reports_name}' \
+      > /app/arquisoftcloudmonitor/.env
 
-              sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['*']/" \
-                /app/arquisoftcloudmonitor/monitoring/settings.py
+    sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['*']/" \
+      /app/arquisoftcloudmonitor/monitoring/settings.py
 
-              pip3 install --upgrade pip --break-system-packages
-              pip3 install -r requirements.txt --break-system-packages
-              pip3 install gunicorn --break-system-packages
+    pip3 install --upgrade pip --break-system-packages
+    pip3 install -r requirements.txt --break-system-packages
+    pip3 install gunicorn --break-system-packages
 
-              echo "Esperando DB finops..."
-              for i in $(seq 1 30); do
-                python3 -c "
-              import psycopg2, sys
-              try:
-                  psycopg2.connect(dbname='${local.db_finops_name}',user='${local.db_finops_user}',password='${var.db_password}',host='${aws_instance.db_finops.private_ip}',port=5432)
-                  sys.exit(0)
-              except: sys.exit(1)
-              " && break
-                sleep 10
-              done
+    echo "Esperando DB finops..."
+    for i in $(seq 1 30); do
+      python3 -c "
+import psycopg2, sys
+try:
+    psycopg2.connect(dbname='${local.db_finops_name}',user='${local.db_finops_user}',password='${var.db_password}',host='${aws_instance.db_finops.private_ip}',port=5432)
+    sys.exit(0)
+except: sys.exit(1)
+" && break
+      sleep 10
+    done
 
-              cd /app/arquisoftcloudmonitor
-              python3 manage.py makemigrations
-              python3 manage.py migrate
+    cd /app/arquisoftcloudmonitor
+    python3 manage.py makemigrations
+    python3 manage.py migrate
 
-              nohup gunicorn monitoring.wsgi:application \
-                --bind 0.0.0.0:8080 \
-                --workers 3 \
-                --log-file /var/log/gunicorn.log \
-                --access-logfile /var/log/gunicorn-access.log \
-                --daemon
-              EOT
+    nohup gunicorn monitoring.wsgi:application \
+      --bind 0.0.0.0:8080 \
+      --workers 3 \
+      --log-file /var/log/gunicorn.log \
+      --access-logfile /var/log/gunicorn-access.log \
+      --daemon
+  EOT
 
   tags = merge(local.common_tags, {
     Name = "${var.project_prefix}-finops-${each.key}"
@@ -561,63 +555,60 @@ resource "aws_instance" "reports" {
   ]
 
   user_data = <<-EOT
-              #!/bin/bash
-              set -e
+    #!/bin/bash
 
-              apt-get update -y
-              apt-get install -y python3-pip git build-essential libpq-dev python3-dev
+    apt-get update -y
+    apt-get install -y python3-pip git build-essential libpq-dev python3-dev
 
-              mkdir -p /app
-              cd /app
-              if [ ! -d arquisoftcloudmonitor ]; then
-                git clone ${local.repository} arquisoftcloudmonitor
-              fi
-              cd /app/arquisoftcloudmonitor
-              git fetch origin ${local.branch}
-              git checkout ${local.branch}
+    mkdir -p /app
+    cd /app
+    if [ ! -d arquisoftcloudmonitor ]; then
+      git clone ${local.repository} arquisoftcloudmonitor
+    fi
+    cd /app/arquisoftcloudmonitor
+    git fetch origin ${local.branch}
+    git checkout ${local.branch}
 
-              cat > /app/arquisoftcloudmonitor/.env << ENVEOF
-              SECRET_KEY=${var.django_secret_key}
-              DB_NAME=${local.db_reports_name}
-              DB_USER=${local.db_reports_user}
-              DB_PASSWORD=${var.db_password}
-              DB_HOST=${aws_instance.db_reports.private_ip}
-              DB_PORT=5432
-              COSTS_DB_NAME=${local.db_reports_name}
-              REDIS_HOST=${aws_instance.cache.private_ip}
-              REDIS_PORT=6379
-              ENVEOF
+    printf 'SECRET_KEY=%s\nDB_NAME=%s\nDB_USER=%s\nDB_PASSWORD=%s\nDB_HOST=%s\nDB_PORT=5432\nCOSTS_DB_NAME=%s\nREDIS_HOST=%s\nREDIS_PORT=6379\n' \
+      '${var.django_secret_key}' \
+      '${local.db_reports_name}' \
+      '${local.db_reports_user}' \
+      '${var.db_password}' \
+      '${aws_instance.db_reports.private_ip}' \
+      '${local.db_reports_name}' \
+      '${aws_instance.cache.private_ip}' \
+      > /app/arquisoftcloudmonitor/.env
 
-              sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['*']/" \
-                /app/arquisoftcloudmonitor/monitoring/settings.py
+    sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['*']/" \
+      /app/arquisoftcloudmonitor/monitoring/settings.py
 
-              pip3 install --upgrade pip --break-system-packages
-              pip3 install -r requirements.txt --break-system-packages
-              pip3 install gunicorn redis django-redis --break-system-packages
+    pip3 install --upgrade pip --break-system-packages
+    pip3 install -r requirements.txt --break-system-packages
+    pip3 install gunicorn redis django-redis --break-system-packages
 
-              echo "Esperando DB reports..."
-              for i in $(seq 1 30); do
-                python3 -c "
-              import psycopg2, sys
-              try:
-                  psycopg2.connect(dbname='${local.db_reports_name}',user='${local.db_reports_user}',password='${var.db_password}',host='${aws_instance.db_reports.private_ip}',port=5432)
-                  sys.exit(0)
-              except: sys.exit(1)
-              " && break
-                sleep 10
-              done
+    echo "Esperando DB reports..."
+    for i in $(seq 1 30); do
+      python3 -c "
+import psycopg2, sys
+try:
+    psycopg2.connect(dbname='${local.db_reports_name}',user='${local.db_reports_user}',password='${var.db_password}',host='${aws_instance.db_reports.private_ip}',port=5432)
+    sys.exit(0)
+except: sys.exit(1)
+" && break
+      sleep 10
+    done
 
-              cd /app/arquisoftcloudmonitor
-              python3 manage.py makemigrations
-              python3 manage.py migrate
+    cd /app/arquisoftcloudmonitor
+    python3 manage.py makemigrations
+    python3 manage.py migrate
 
-              nohup gunicorn monitoring.wsgi:application \
-                --bind 0.0.0.0:8080 \
-                --workers 3 \
-                --log-file /var/log/gunicorn.log \
-                --access-logfile /var/log/gunicorn-access.log \
-                --daemon
-              EOT
+    nohup gunicorn monitoring.wsgi:application \
+      --bind 0.0.0.0:8080 \
+      --workers 3 \
+      --log-file /var/log/gunicorn.log \
+      --access-logfile /var/log/gunicorn-access.log \
+      --daemon
+  EOT
 
   tags = merge(local.common_tags, {
     Name = "${var.project_prefix}-reports-${each.key}"
@@ -643,61 +634,59 @@ resource "aws_instance" "orgs" {
   ]
 
   user_data = <<-EOT
-              #!/bin/bash
-              set -e
+    #!/bin/bash
 
-              apt-get update -y
-              apt-get install -y python3-pip git build-essential libpq-dev python3-dev
+    apt-get update -y
+    apt-get install -y python3-pip git build-essential libpq-dev python3-dev
 
-              mkdir -p /app
-              cd /app
-              if [ ! -d arquisoftcloudmonitor ]; then
-                git clone ${local.repository} arquisoftcloudmonitor
-              fi
-              cd /app/arquisoftcloudmonitor
-              git fetch origin ${local.branch}
-              git checkout ${local.branch}
+    mkdir -p /app
+    cd /app
+    if [ ! -d arquisoftcloudmonitor ]; then
+      git clone ${local.repository} arquisoftcloudmonitor
+    fi
+    cd /app/arquisoftcloudmonitor
+    git fetch origin ${local.branch}
+    git checkout ${local.branch}
 
-              cat > /app/arquisoftcloudmonitor/.env << ENVEOF
-              SECRET_KEY=${var.django_secret_key}
-              DB_NAME=${local.db_auth_name}
-              DB_USER=${local.db_auth_user}
-              DB_PASSWORD=${var.db_password}
-              DB_HOST=${aws_instance.db_auth.private_ip}
-              DB_PORT=5432
-              COSTS_DB_NAME=${local.db_reports_name}
-              ENVEOF
+    printf 'SECRET_KEY=%s\nDB_NAME=%s\nDB_USER=%s\nDB_PASSWORD=%s\nDB_HOST=%s\nDB_PORT=5432\nCOSTS_DB_NAME=%s\n' \
+      '${var.django_secret_key}' \
+      '${local.db_auth_name}' \
+      '${local.db_auth_user}' \
+      '${var.db_password}' \
+      '${aws_instance.db_auth.private_ip}' \
+      '${local.db_reports_name}' \
+      > /app/arquisoftcloudmonitor/.env
 
-              sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['*']/" \
-                /app/arquisoftcloudmonitor/monitoring/settings.py
+    sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['*']/" \
+      /app/arquisoftcloudmonitor/monitoring/settings.py
 
-              pip3 install --upgrade pip --break-system-packages
-              pip3 install -r requirements.txt --break-system-packages
-              pip3 install gunicorn --break-system-packages
+    pip3 install --upgrade pip --break-system-packages
+    pip3 install -r requirements.txt --break-system-packages
+    pip3 install gunicorn --break-system-packages
 
-              echo "Esperando DB auth..."
-              for i in $(seq 1 30); do
-                python3 -c "
-              import psycopg2, sys
-              try:
-                  psycopg2.connect(dbname='${local.db_auth_name}',user='${local.db_auth_user}',password='${var.db_password}',host='${aws_instance.db_auth.private_ip}',port=5432)
-                  sys.exit(0)
-              except: sys.exit(1)
-              " && break
-                sleep 10
-              done
+    echo "Esperando DB auth..."
+    for i in $(seq 1 30); do
+      python3 -c "
+import psycopg2, sys
+try:
+    psycopg2.connect(dbname='${local.db_auth_name}',user='${local.db_auth_user}',password='${var.db_password}',host='${aws_instance.db_auth.private_ip}',port=5432)
+    sys.exit(0)
+except: sys.exit(1)
+" && break
+      sleep 10
+    done
 
-              cd /app/arquisoftcloudmonitor
-              python3 manage.py makemigrations
-              python3 manage.py migrate
+    cd /app/arquisoftcloudmonitor
+    python3 manage.py makemigrations
+    python3 manage.py migrate
 
-              nohup gunicorn monitoring.wsgi:application \
-                --bind 0.0.0.0:8080 \
-                --workers 3 \
-                --log-file /var/log/gunicorn.log \
-                --access-logfile /var/log/gunicorn-access.log \
-                --daemon
-              EOT
+    nohup gunicorn monitoring.wsgi:application \
+      --bind 0.0.0.0:8080 \
+      --workers 3 \
+      --log-file /var/log/gunicorn.log \
+      --access-logfile /var/log/gunicorn-access.log \
+      --daemon
+  EOT
 
   tags = merge(local.common_tags, {
     Name = "${var.project_prefix}-orgs"
