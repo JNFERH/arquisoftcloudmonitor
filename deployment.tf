@@ -360,23 +360,7 @@ locals {
     pip3 install -r /app/arquisoftcloudmonitor/requirements.txt --break-system-packages --ignore-installed
     pip3 install gunicorn --break-system-packages
 
-    cat > /etc/systemd/system/django.service << 'SVCEOF'
-    [Unit]
-    Description=Django App - BITE.co FinOps
-    After=network.target
-
-    [Service]
-    User=root
-    WorkingDirectory=/app/arquisoftcloudmonitor
-    ExecStart=/usr/bin/python3 manage.py runserver 0.0.0.0:8080
-    Restart=always
-    RestartSec=5
-    StandardOutput=journal
-    StandardError=journal
-
-    [Install]
-    WantedBy=multi-user.target
-    SVCEOF
+    printf '[Unit]\nDescription=Django App - BITE.co FinOps\nAfter=network.target\n\n[Service]\nUser=root\nWorkingDirectory=/app/arquisoftcloudmonitor\nExecStart=/usr/bin/python3 manage.py runserver 0.0.0.0:8080\nRestart=always\nRestartSec=5\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/django.service
 
     systemctl daemon-reload
     systemctl enable django
@@ -438,23 +422,7 @@ except: sys.exit(1)
     python3 manage.py migrate
     python3 manage.py migrate --database=costs_db
 
-    cat > /etc/systemd/system/django.service << 'SVCEOF'
-    [Unit]
-    Description=Django App - BITE.co FinOps
-    After=network.target
-
-    [Service]
-    User=root
-    WorkingDirectory=/app/arquisoftcloudmonitor
-    ExecStart=/usr/bin/python3 manage.py runserver 0.0.0.0:8080
-    Restart=always
-    RestartSec=5
-    StandardOutput=journal
-    StandardError=journal
-
-    [Install]
-    WantedBy=multi-user.target
-    SVCEOF
+    printf '[Unit]\nDescription=Django App - BITE.co FinOps\nAfter=network.target\n\n[Service]\nUser=root\nWorkingDirectory=/app/arquisoftcloudmonitor\nExecStart=/usr/bin/python3 manage.py runserver 0.0.0.0:8080\nRestart=always\nRestartSec=5\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/django.service
 
     systemctl daemon-reload
     systemctl enable django
